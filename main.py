@@ -33,6 +33,10 @@ class CaseAnalysis(BaseModel):
     estimated_resolution_time: str
     suggested_actions: List[str]
     salesforce_data: Optional[Dict] = None
+    
+    class Config:
+        # Allow assignment to fields after object creation
+        allow_mutation = True
 
 class CaseClassifier:
     def __init__(self):
@@ -255,17 +259,24 @@ async def analyze_case_by_number(request: CaseNumberRequest):
         # Run classification
         analysis = classifier.classify_case(case_data)
         
-        # Add Salesforce data and case number to response
-        analysis.case_number = request.case_number
-        analysis.salesforce_data = {
-            "case_id": sf_case.get("Id"),
-            "status": sf_case.get("Status"),
-            "origin": sf_case.get("Origin"),
-            "type": sf_case.get("Type"),
-            "created_date": sf_case.get("CreatedDate")
-        }
-        
-        return analysis
+        # Create new response with Salesforce data
+        return CaseAnalysis(
+            case_id=analysis.case_id,
+            case_number=request.case_number,
+            predicted_category=analysis.predicted_category,
+            confidence_score=analysis.confidence_score,
+            recommended_queue=analysis.recommended_queue,
+            priority_level=analysis.priority_level,
+            estimated_resolution_time=analysis.estimated_resolution_time,
+            suggested_actions=analysis.suggested_actions,
+            salesforce_data={
+                "case_id": sf_case.get("Id"),
+                "status": sf_case.get("Status"),
+                "origin": sf_case.get("Origin"),
+                "type": sf_case.get("Type"),
+                "created_date": sf_case.get("CreatedDate")
+            }
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")

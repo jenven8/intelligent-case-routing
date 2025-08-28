@@ -4,10 +4,13 @@ from typing import Dict, List, Optional
 import uvicorn
 from datetime import datetime
 import re
+import os
+import requests
+import json
 
 app = FastAPI(
     title="Intelligent Case Routing API",
-    description="AI-powered case classification and routing system",
+    description="AI-powered case classification and routing system with Salesforce integration",
     version="1.0.0"
 )
 
@@ -16,15 +19,20 @@ class CaseData(BaseModel):
     description: str
     priority: Optional[str] = "Medium"
     customer_type: Optional[str] = "Individual"
+
+class CaseNumberRequest(BaseModel):
+    case_number: str
     
 class CaseAnalysis(BaseModel):
     case_id: str
+    case_number: Optional[str] = None
     predicted_category: str
     confidence_score: float
     recommended_queue: str
     priority_level: str
     estimated_resolution_time: str
     suggested_actions: List[str]
+    salesforce_data: Optional[Dict] = None
 
 class CaseClassifier:
     def __init__(self):
@@ -155,6 +163,137 @@ class CaseClassifier:
 
 # Initialize classifier
 classifier = CaseClassifier()
+
+class SalesforceIntegration:
+    def __init__(self):
+        # These would typically come from environment variables
+        self.base_url = "https://your-instance.salesforce.com"  # This will be configured
+        self.access_token = None
+    
+    async def get_case_by_number(self, case_number: str) -> Dict:
+        """
+        Mock Salesforce integration - in production this would connect to real Salesforce
+        For now, returns sample data based on case number patterns
+        """
+        # Mock data based on case number patterns
+        mock_cases = {
+            "00001234": {
+                "Id": "5004W00002ghfgbQAA",
+                "CaseNumber": "00001234",
+                "Subject": "Payroll tax withholding discrepancy for Q4 2024",
+                "Description": "Employee reports that federal tax withholding on W2 is $2,000 less than expected based on salary of $75,000 and married filing jointly status. Need to investigate payroll processing for October-December period.",
+                "Status": "New",
+                "Priority": "High",
+                "Origin": "Email",
+                "Type": "Payroll Issue",
+                "CreatedDate": "2024-12-15T10:30:00.000+0000"
+            },
+            "00001235": {
+                "Id": "5004W00002ghfgcQAA", 
+                "CaseNumber": "00001235",
+                "Subject": "ACH deposit failed - invalid routing number",
+                "Description": "Customer attempted to set up direct deposit but bank rejected the ACH transfer. Error message indicates routing number 123456789 is invalid. Customer bank is Wells Fargo, account verified.",
+                "Status": "Open",
+                "Priority": "Medium", 
+                "Origin": "Phone",
+                "Type": "Banking Issue",
+                "CreatedDate": "2024-12-16T14:22:00.000+0000"
+            },
+            "00001236": {
+                "Id": "5004W00002ghfgdQAA",
+                "CaseNumber": "00001236", 
+                "Subject": "Suspicious transactions detected on account",
+                "Description": "Customer reports 5 unauthorized charges totaling $1,247.83 appeared overnight. All transactions from same merchant 'UNKNOWN VENDOR LLC'. Customer did not authorize these charges and requests immediate investigation.",
+                "Status": "Escalated",
+                "Priority": "High",
+                "Origin": "Web",
+                "Type": "Fraud Alert", 
+                "CreatedDate": "2024-12-17T08:15:00.000+0000"
+            }
+        }
+        
+        case_data = mock_cases.get(case_number)
+        if not case_data:
+            # Return a generic case if not found in mock data
+            case_data = {
+                "Id": f"500{case_number}",
+                "CaseNumber": case_number,
+                "Subject": f"Case {case_number} - General inquiry",
+                "Description": f"This is a sample case {case_number} for demonstration purposes.",
+                "Status": "New",
+                "Priority": "Medium",
+                "Origin": "Web",
+                "Type": "General",
+                "CreatedDate": datetime.now().isoformat()
+            }
+        
+        return case_data
+
+# Initialize Salesforce integration
+sf_integration = SalesforceIntegration()
+
+@app.post("/analyze-case-by-number", response_model=CaseAnalysis)
+async def analyze_case_by_number(request: CaseNumberRequest):
+    """
+    Analyze a case by looking up the case number in Salesforce
+    """
+    try:
+        # Get case data from Salesforce
+        sf_case = await sf_integration.get_case_by_number(request.case_number)
+        
+        if not sf_case:
+            raise HTTPException(status_code=404, detail=f"Case {request.case_number} not found")
+        
+        # Create CaseData object from Salesforce data
+        case_data = CaseData(
+            subject=sf_case.get("Subject", ""),
+            description=sf_case.get("Description", ""),
+            priority=sf_case.get("Priority", "Medium"),
+            customer_type="Business" if sf_case.get("Type") in ["Payroll Issue", "Banking Issue"] else "Individual"
+        )
+        
+        # Run classification
+        analysis = classifier.classify_case(case_data)
+        
+        # Add Salesforce data and case number to response
+        analysis.case_number = request.case_number
+        analysis.salesforce_data = {
+            "case_id": sf_case.get("Id"),
+            "status": sf_case.get("Status"),
+            "origin": sf_case.get("Origin"),
+            "type": sf_case.get("Type"),
+            "created_date": sf_case.get("CreatedDate")
+        }
+        
+        return analysis
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@app.get("/test-cases")
+async def get_test_cases():
+    """
+    Returns sample case numbers for testing
+    """
+    return {
+        "sample_cases": [
+            {
+                "case_number": "00001234",
+                "type": "Payroll Issue",
+                "description": "Tax withholding discrepancy"
+            },
+            {
+                "case_number": "00001235", 
+                "type": "Banking Issue",
+                "description": "ACH deposit failed"
+            },
+            {
+                "case_number": "00001236",
+                "type": "Fraud Alert", 
+                "description": "Suspicious transactions"
+            }
+        ]
+    }
 
 @app.get("/")
 async def root():
